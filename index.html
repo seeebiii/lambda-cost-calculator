@@ -1,0 +1,202 @@
+<html>
+<head>
+    <title>AWS Lambda Cost Calculator</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css"
+          integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+    <script src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
+
+    <style type="text/css">
+        #lambda-add-form {
+            display: none;
+        }
+
+        .costs {
+            font-weight: 700;
+        }
+    </style>
+
+    <script type="text/javascript">
+        $(document).ready(function () {
+            const startMemSize = 128;
+            const freeRequestsTier = 1000000;
+            const freeExecTimeTier = 400000;
+            const costPerReq = 0.0000002;
+            const costPerGBS = 0.00001667;
+            let idCount = 0;
+
+            function r(x) {
+                return Math.round(x * 100) / 100;
+            }
+
+            function init() {
+                const step = 64;
+                const totalSteps = 23;
+
+                let html = `<option value="${startMemSize}">${startMemSize}</option>`;
+                for (let i = 1; i < totalSteps; i++) {
+                    let memSize = startMemSize + (step * i);
+                    html += `<option value="${memSize}">${memSize}</option>`;
+                }
+
+                $('#lambda_memory').append(html);
+            }
+
+            function getTotalCompute(execs, execTime, memory) {
+                let gbsPercent = memory / 1024;
+                return execs * (execTime / 1000) * gbsPercent;
+            }
+
+            function calcCosts(execs, execTime, memory, freeReq, freeExecTime) {
+                let requestCosts = 0;
+                let executionCosts = 0;
+
+                // calc request costs
+                let requests = freeReq > 0 ? (execs - freeReq) : execs;
+                if (requests > 0) {
+                    requestCosts = requests * costPerReq;
+                }
+
+                // calc duration costs
+                let totalCompute = getTotalCompute(execs, execTime, memory);
+                let billableCompute = freeExecTime > 0 ? (totalCompute - freeExecTime) : totalCompute;
+                if (billableCompute > 0) {
+                    executionCosts = billableCompute * costPerGBS;
+                }
+
+                return requestCosts + executionCosts;
+            }
+
+            function calcTotalCosts() {
+                let freeReq = freeRequestsTier;
+                let freeCompute = freeExecTimeTier;
+                let totalCosts = 0;
+                let totalFreeTierCosts = 0;
+                let lambdaTable = $('#lambda-table');
+
+                // recalc costs for all lambdas
+                lambdaTable.find('tbody tr:not(.ignore)').each((idx, elem) => {
+                    let row = $(elem);
+
+                    // get lambda details
+                    let execs = parseInt(row.find('td:eq(1)').html());
+                    let execTimes = parseInt(row.find('td:eq(2)').html());
+                    let memory = parseInt(row.find('td:eq(3)').html());
+                    let costs = parseFloat(row.find('td:eq(4)').html());
+
+                    // calculate costs respecting the available free tier
+                    let freeTierCosts = calcCosts(execs, execTimes, memory, freeReq, freeCompute);
+
+                    // write costs to "with free tier" column
+                    row.find('td:eq(5)').html(r(freeTierCosts));
+
+                    // sum up costs
+                    totalCosts += costs;
+                    totalFreeTierCosts += freeTierCosts;
+
+                    // now reduce the free tier by the used requests
+                    freeReq -= execs;
+                    if (freeReq <= 0) {
+                        freeReq = 0;
+                    }
+
+                    // now reduce the free tier by the used compute
+                    freeCompute -= getTotalCompute(execs, execTimes, memory);
+                    if (freeCompute <= 0) {
+                        freeCompute = 0;
+                    }
+                });
+
+                // update total costs and total free tier costs
+                lambdaTable.find('tbody tr:last-child td:eq(4)').html(r(totalCosts));
+                lambdaTable.find('tbody tr:last-child td:eq(5)').html(r(totalFreeTierCosts));
+            }
+
+            $('#lambda-add-btn').on('click', function (e) {
+                e.preventDefault();
+
+                // show form to add lambda
+                $('#lambda-add-form').show();
+            });
+
+            $('#lambda-form-save').on('click', function (e) {
+                e.preventDefault();
+
+                // get fields
+                let memorySizeField = $('#lambda_memory');
+                let form = $('#lambda-add-form');
+
+                // collect values
+                let id = idCount++;
+                let execs = $('#lambda_executions').val();
+                let execTime = $('#lambda_exec_time').val();
+                let memory = memorySizeField.val();
+                let costs = calcCosts(execs, execTime, memory, 0, 0);
+                let html = `<tr><td>${id}</td><td>${execs}</td><td>${execTime}</td><td>${memory}</td><td>${r(costs)}</td><td></td></tr>`;
+
+                // add to table
+                $('#lambda-table').find('tbody tr.ignore').before(html);
+
+                // clear form fields and hide form
+                memorySizeField.val(startMemSize);
+                form.find('input[type=number]').val('');
+                form.hide();
+
+                // recalculate total costs
+                calcTotalCosts();
+            });
+
+            init();
+        });
+    </script>
+</head>
+<body>
+<div class="container">
+    <div class="row">
+        <table id="lambda-table" class="table table-hover" style="width: 100%;">
+            <thead>
+            <th>#</th>
+            <th>Executions</th>
+            <th>Execution Time (ms)</th>
+            <th>Allocated Memory (MB)</th>
+            <th>Costs</th>
+            <th>With Free Tier</th>
+            </thead>
+            <tbody>
+                <tr class="ignore">
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td class="costs">0</td>
+                    <td class="costs">0</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="row">
+        <button id="lambda-add-btn" type="button" class="btn btn-default">Add Lambda</button>
+    </div>
+
+    <div id="lambda-add-form" class="row">
+        <form>
+            <div class="form-group">
+                <label for="lambda_executions">Number of executions</label>
+                <input type="number" class="form-control" id="lambda_executions">
+            </div>
+            <div class="form-group">
+                <label for="lambda_exec_time">Average execution time (ms)</label>
+                <input type="number" class="form-control" id="lambda_exec_time">
+            </div>
+            <div class="form-group">
+                <label for="lambda_memory">Allocated Memory (MB)</label>
+                <select id="lambda_memory">
+
+                </select>
+            </div>
+            <button id="lambda-form-save" type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+</div>
+</body>
+</html>

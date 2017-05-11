@@ -5,6 +5,9 @@ Based on the pricing [on this page](https://aws.amazon.com/lambda/pricing/).
 ## Author
 Sebastian Hesse
 
+## Demo
+https://seeebiii.github.io/lambda-cost-calculator/index.html
+
 
 ## License
 MIT License
